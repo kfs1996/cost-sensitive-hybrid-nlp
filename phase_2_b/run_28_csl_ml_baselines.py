@@ -13,6 +13,8 @@ from sklearn.metrics import accuracy_score
 from concurrent.futures import ProcessPoolExecutor
 import os
 
+from utils.plot_metrics import generate_and_save_plots
+
 from sklearn.svm import LinearSVC, SVC
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.linear_model import LogisticRegression
@@ -34,7 +36,7 @@ def get_ml_model(algo, w_dict):
     if algo == 'CS-SVM (Linear)':
         return LinearSVC(class_weight=w_dict, random_state=42)
     elif algo == 'CS-SVM (RBF)':
-        return SVC(kernel='rbf', class_weight=w_dict, random_state=42)
+        return SVC(kernel='rbf', class_weight=w_dict, probability=True, random_state=42)
     elif algo == 'CS-DT':
         return DecisionTreeClassifier(class_weight=w_dict, random_state=42)
     elif algo == 'CS-LR':
@@ -59,6 +61,16 @@ def train_and_evaluate_csl_ml(dataset_name, algo, embed, fold_idx, X_train_emb, 
     model.fit(X_train_emb, y_train)
     
     preds = model.predict(X_test_emb)
+    
+    if hasattr(model, "predict_proba"):
+        y_prob = model.predict_proba(X_test_emb)
+    elif hasattr(model, "decision_function"):
+        y_prob = model.decision_function(X_test_emb)
+    else:
+        y_prob = None
+        
+    generate_and_save_plots(y_test, preds, y_prob, num_classes, "Phase_2-B", dataset_name, embed, algo)
+    
     acc = accuracy_score(y_test, preds)
     print(f"[{dataset_name}] {algo} + {embed} | Fold {fold_idx} | Acc: {acc:.4f}")
     return dataset_name, algo, embed, fold_idx, acc
