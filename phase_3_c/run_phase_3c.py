@@ -12,8 +12,9 @@ from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import accuracy_score
 import time
 import itertools
-import os
 from joblib import Parallel, delayed
+
+from utils.plot_metrics import generate_and_save_plots
 
 from sklearn.svm import LinearSVC, SVC
 from sklearn.tree import DecisionTreeClassifier
@@ -35,7 +36,7 @@ def get_ml_model(algo, w_dict):
     if algo == 'CS-SVM (Linear)':
         return LinearSVC(class_weight=w_dict, random_state=42)
     elif algo == 'CS-SVM (RBF)':
-        return SVC(kernel='rbf', class_weight=w_dict, random_state=42)
+        return SVC(kernel='rbf', class_weight=w_dict, probability=True, random_state=42)
     elif algo == 'CS-DT':
         return DecisionTreeClassifier(class_weight=w_dict, random_state=42)
     elif algo == 'CS-LR':
@@ -50,10 +51,20 @@ def pool_to_2d(emb):
         return emb.mean(axis=1)
     return emb
 
-def evaluate_model(ds_name, algo, combo_name, fold_idx, X_train_hyb, X_test_hyb, y_train, y_test, w_dict, out_file):
+def evaluate_model(ds_name, algo, combo_name, fold_idx, X_train_hyb, X_test_hyb, y_train, y_test, w_dict, out_file, num_classes):
     model = get_ml_model(algo, w_dict)
     model.fit(X_train_hyb, y_train)
     preds = model.predict(X_test_hyb)
+    
+    if hasattr(model, "predict_proba"):
+        y_prob = model.predict_proba(X_test_hyb)
+    elif hasattr(model, "decision_function"):
+        y_prob = model.decision_function(X_test_hyb)
+    else:
+        y_prob = None
+        
+    generate_and_save_plots(y_test, preds, y_prob, num_classes, "Phase_3-C", ds_name, combo_name, algo)
+    
     acc = accuracy_score(y_test, preds)
     
     with open(out_file, "a") as f:
@@ -112,7 +123,7 @@ def main():
                 X_test_hyb = np.hstack(test_parts).astype(np.float32)
                 
                 for algo in ALGORITHMS:
-                    tasks.append((ds_name, algo, combo_name, fold_idx, X_train_hyb, X_test_hyb, y_train, y_test, w_dict, out_file))
+                    tasks.append((ds_name, algo, combo_name, fold_idx, X_train_hyb, X_test_hyb, y_train, y_test, w_dict, out_file, len(np.unique(y_train))))
             
             # Unleash max CPU parallelization
             Parallel(n_jobs=-1, backend="loky")(
