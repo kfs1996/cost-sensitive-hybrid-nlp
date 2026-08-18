@@ -1,0 +1,3 @@
+dataset,team,meta_clf,alpha,accuracy,macro_f1,weighted_f1
+promise,Lexical_Semantic_Hybrid,logreg,0.0,79.5657283264783,63.738069760054074,78.2806909876034
+promise,Lexical_Semantic_Hybrid,logreg,0.5,79.25698413546284,66.64885794312234,79.38622045065392
