@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Phase 2 - Cost-Aware Ensemble Stacking</title>
+<style>
+  body { font-family: 'Times New Roman', Times, serif; font-size: 12pt; line-height: 1.5; margin: 1in; }
+  h1 { font-size: 18pt; text-align: center; font-weight: bold; }
+  h2 { font-size: 14pt; font-weight: bold; margin-top: 1.5em; }
+  h3 { font-size: 12pt; font-weight: bold; font-style: italic; }
+  p { margin-bottom: 1em; text-align: justify; }
+  ul { margin-bottom: 1em; }
+  li { margin-bottom: 0.5em; }
+  .diagram-note { font-style: italic; color: #555; }
+</style>
+</head>
+<body>
+
+<h1>Chapter Overview: Phase 2 - Cost-Aware Ensemble Stacking</h1>
+
+<p>This document provides a highly detailed, deeply technical breakdown of <strong>Phase 2</strong> of the research methodology. While Phase 1 demonstrated the efficacy of Feature Fusion (concatenating sparse lexical and dense semantic features), Phase 2 investigates <strong>Ensemble Stacking</strong>. The primary objective of Phase 2 is to determine if a "Meta-Classifier" can learn to intelligently resolve disagreements between isolated Base Experts (TF-IDF and Sentence-BERT), particularly when prioritizing rare Non-Functional Requirements (NFRs) via cost-aware weighting.</p>
+
+<p>Phase 2 is divided into two distinct architectural approaches: <strong>Phase 2.1 (Hard Stacking)</strong> and <strong>Phase 2.2 (Soft Stacking)</strong>.</p>
+
+<hr>
+
+<h2>1. The Core Architecture: Nested Cross-Validation</h2>
+
+<p>Before discussing the differences between Hard and Soft stacking, it is critical to understand <em>how</em> the stacking was trained. If a Meta-Classifier is trained on the same data that the Base Experts were trained on, it will suffer from massive data leakage (overfitting). To prevent this, we engineered a rigorous <strong>Nested 5-Fold Cross-Validation</strong> loop.</p>
+
+<h3>How it was engineered:</h3>
+<ul>
+  <li><strong>Outer Loop (Evaluation):</strong> The dataset is split into 5 folds. 4 folds are used for training the entire ensemble, and 1 fold is held completely unseen for the final test.</li>
+  <li><strong>Inner Loop (Meta-Training):</strong> Inside the 4 training folds, the data is split <em>again</em>. The Base Experts (TF-IDF and SBERT) are trained on a subset, and they make predictions on the remaining subset.</li>
+  <li><strong>Out-of-Fold Predictions:</strong> Because the Base Experts had never seen that remaining subset, their predictions are "honest." These honest predictions become the actual training data (the features) for the Meta-Classifier.</li>
+</ul>
+<p class="diagram-note">(Please insert Nested CV Architecture Diagram here)</p>
+
+<hr>
+
+<h2>2. Phase 2.1: Hard Stacking (The Information Bottleneck)</h2>
+
+<h3>What We Did</h3>
+<p>In <strong>Hard Stacking</strong>, the Base Experts are forced to make a definitive, discrete decision before passing their output to the Meta-Classifier. We used the <code>StackingClassifier</code> from <code>scikit-learn</code>, but deliberately stripped away the probability outputs.</p>
+
+<h3>How We Did It (Technical Implementation)</h3>
+<ul>
+  <li><strong>Expert Processing:</strong> The raw text was passed to TF-IDF and SBERT independently. Both experts evaluated the text against their trained Support Vector Machines (SVMs).</li>
+  <li><strong>Hard Voting (predict):</strong> We forced the SVMs to use the standard <code>predict()</code> function, which outputs a single integer representing the winning class (e.g., <code>1</code> for Security, <code>2</code> for Usability).</li>
+  <li><strong>Meta-Classification:</strong> The Meta-Classifier (Logistic Regression, Random Forest, or SVM) received an array of discrete integers <code>[1, 3]</code> as its only input features. It attempted to learn which expert to trust based on historical accuracy.</li>
+</ul>
+
+<h3>The Results & The Bottleneck Discovery</h3>
+<p>Phase 2.1 yielded unexpectedly poor results across both datasets. Even after applying massive Grid Search hyperparameter tuning, Phase 2.1 failed to cross the 90% threshold on FNFC (peaking at 89.24% with Random Forest) and performed abysmally on minority-class detection (Macro-F1 of ~10% for SVM and LogReg).</p>
+
+<p><strong>The Discovery:</strong> We identified a severe <strong>Information Bottleneck</strong>. By forcing the Base Experts to output rigid integer classifications (<code>1</code> or <code>3</code>), all mathematical nuance and confidence metrics were destroyed. If SBERT was 99% confident, and TF-IDF was 51% confident, the Meta-Classifier could not see the difference. It only saw <code>[1, 3]</code>. The Meta-Classifier had no variance to learn from, rendering the stacking architecture fundamentally ineffective for rare-class NFR detection.</p>
+<p class="diagram-note">(Please insert Phase 2.1 Architecture Diagram here)</p>
+
+<hr>
+
+<h2>3. Phase 2.2: Soft Stacking (The Breakthrough)</h2>
+
+<h3>What We Did</h3>
+<p>To resolve the Information Bottleneck, we transitioned to <strong>Soft Stacking</strong>. Instead of passing discrete votes, the Base Experts pass their continuous probability distributions (or decision function distances).</p>
+
+<h3>How We Did It (Technical Implementation)</h3>
+<ul>
+  <li><strong>Expert Processing:</strong> The requirement is passed to TF-IDF and SBERT.</li>
+  <li><strong>Soft Confidence Output (predict_proba / decision_function):</strong> Instead of outputting an integer, we instructed the Base Experts to output a continuous array. For example, if there are two classes, TF-IDF outputs <code>[0.51, 0.49]</code> and SBERT outputs <code>[0.01, 0.99]</code>.</li>
+  <li><strong>Cost-Aware Meta-Classification:</strong> The Meta-Classifier receives the concatenated array of continuous decimal probabilities: <code>[0.51, 0.49, 0.01, 0.99]</code>.</li>
+  <li><strong>Grid Search Tuning:</strong> We applied <code>GridSearchCV</code> to the Meta-Classifier. We mathematically enforced a <code>class_weight='balanced'</code> (our alpha=0.5 equivalent), forcing the Meta-Classifier to hypersensitize itself to the rarest classes. The Grid Search systematically tested hundreds of internal parameters (like the C penalty parameter in SVM) to find the absolute mathematically optimal configuration for decoding those probability arrays.</li>
+</ul>
+
+<h3>What We Achieved</h3>
+<p>Phase 2.2 successfully recovered the lost information and yielded breakthrough results, particularly on the highly complex, multi-class PROMISE dataset.</p>
+
+<p><strong>Dataset 1: FNFC (Binary)</strong></p>
+<ul>
+  <li>The Tuned SVM Meta-Classifier achieved <strong>91.24% Accuracy</strong>, nearly matching the Phase 1 Feature Fusion ceiling (91.47%).</li>
+  <li>More importantly, it achieved the highest <strong>Macro-F1 score (50.22%)</strong> of the entire experiment, proving that Soft Stacking is vastly superior at identifying the rare minority classes in binary datasets.</li>
+</ul>
+
+<p><strong>Dataset 2: PROMISE (Multi-Class)</strong></p>
+<ul>
+  <li>The complexity of Soft Stacking proved to be perfectly suited for the chaotic, 11-class PROMISE dataset.</li>
+  <li>Phase 1 Feature Fusion peaked at 80.18%.</li>
+  <li>The Tuned Phase 2.2 SVM Meta-Classifier broke the ceiling, achieving an unprecedented <strong>81.52% Accuracy</strong>.</li>
+  <li>This proves conclusively that for complex, multi-class text environments, isolated experts feeding continuous probability distributions into a tuned, cost-aware Meta-Classifier yields the highest mathematical performance.</li>
+</ul>
+<p class="diagram-note">(Please insert Phase 2.2 Architecture Diagram here)</p>
+
+<hr>
+
+<h2>4. Conclusion & Future Work Context</h2>
+
+<h3>The Final Verdict</h3>
+<ul>
+  <li>For simple, binary classification (FNFC), the raw mathematical combination of Feature Fusion (Phase 1) is the most efficient and accurate architecture.</li>
+  <li>For complex, multi-class classification (PROMISE), Cost-Aware Soft Stacking (Phase 2.2) is the undisputed champion.</li>
+</ul>
+
+<h3>Future Directions (Domain-Specific Embeddings)</h3>
+<p>While this study utilized a highly efficient general-purpose semantic embedding model (Sentence-BERT: <code>all-MiniLM-L6</code>), future research should evaluate this exact Soft Stacking architecture using domain-specific models such as <strong>seBERT</strong> (Software Engineering BERT) or <strong>RE-BERT</strong> (Requirements Engineering BERT). Due to the significant computational overhead of these 110M+ parameter models, investigating whether domain-specific embeddings further elevate the Meta-Classifier's ability to detect rare-class requirements remains an open and highly promising area for future large-scale empirical studies.</p>
+
+</body>
+</html>
